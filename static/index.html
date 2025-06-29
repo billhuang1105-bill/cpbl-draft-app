@@ -1,149 +1,131 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>雙人選秀模擬器</title>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
+    <title>選秀模擬器</title>
     <script>
-        let ws = null;
         let team = null;
-        let state = {};
-        let connected = false;
+        let socket = null;
+        let currentPosition = "";
+        let currentPlayer = "";
 
-        function connectWebSocket(selectedTeam) {
-            if (connected) return;
-            team = selectedTeam;
-            const protocol = location.protocol === "https:" ? "wss" : "ws";
-            ws = new WebSocket(`${protocol}://${location.host}/ws/${team}`);
-            connected = true;
+        function connect() {
+            team = document.getElementById("team").value;
+            socket = new WebSocket(`ws://${location.host}/ws/${team}`);
 
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type === "state") {
-                    state = data;
-                    updateUI();
+            socket.onmessage = function(event) {
+                const msg = JSON.parse(event.data);
+
+                if (msg.type === "state") {
+                    document.getElementById("status").textContent = msg.turn ? `輪到隊伍 ${msg.turn}` : "尚未開始";
+                    document.getElementById("countdown").textContent = msg.countdown ? `倒數：${msg.countdown} 秒` : "";
+
+                    // 更新球員選單
+                    ["P", "C", "IF", "OF"].forEach(pos => {
+                        const select = document.getElementById(`player_${pos}`);
+                        select.innerHTML = "";
+                        msg.available[pos].forEach(player => {
+                            const opt = document.createElement("option");
+                            opt.value = player;
+                            opt.text = player;
+                            select.appendChild(opt);
+                        });
+                    });
+
+                    document.getElementById("teamAList").textContent = msg.teams["A"].join(", ");
+                    document.getElementById("teamBList").textContent = msg.teams["B"].join(", ");
                 }
             };
-
-            ws.onopen = () => {
-                document.getElementById("status").innerText = `已連線：隊伍 ${team}`;
-                if (team !== 'A') {
-                    document.getElementById("input_section").style.display = "none";
-                }
-            };
-
-            ws.onerror = (err) => {
-                console.error("WebSocket error", err);
-            };
-        }
-
-        function send(type, payload = {}) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type, ...payload }));
-            }
         }
 
         function addPlayers() {
             const positions = ["P", "C", "IF", "OF"];
-            const players = {};
-            for (let pos of positions) {
-                const input = document.getElementById(`input_${pos}`).value.trim();
-                players[pos] = input ? input.split("\n") : [];
-            }
-            send("add_players", { players });
+            const playerData = {};
+            positions.forEach(pos => {
+                const names = document.getElementById(`input_${pos}`).value;
+                playerData[pos] = names.split(",").map(x => x.trim()).filter(x => x);
+            });
+            socket.send(JSON.stringify({ type: "add_players", players: playerData }));
         }
 
         function startDraft() {
-            send("start_draft");
+            socket.send(JSON.stringify({ type: "start_draft" }));
         }
 
         function resetDraft() {
-            send("reset");
+            socket.send(JSON.stringify({ type: "reset" }));
         }
 
-        function pickPlayer() {
-            const pos = document.getElementById("select_position").value;
-            const player = document.getElementById("select_player").value;
-            if (confirm(`確定要選擇 ${player} 嗎？`)) {
-                send("pick", { position: pos, player });
-            }
-        }
-
-        function updateUI() {
-            document.getElementById("team_turn").innerText = `目前輪到：${state.turn || "-"}`;
-            document.getElementById("countdown").innerText = `倒數：${state.countdown || 0} 秒`;
-
-            const select = document.getElementById("select_player");
-            const pos = document.getElementById("select_position").value;
-            select.innerHTML = "";
-            if (state.available && state.available[pos]) {
-                for (let player of state.available[pos]) {
-                    const option = document.createElement("option");
-                    option.text = player;
-                    option.value = player;
-                    select.appendChild(option);
+        function selectPlayer(pos) {
+            currentPosition = pos;
+            const select = document.getElementById(`player_${pos}`);
+            currentPlayer = select.value;
+            if (currentPlayer) {
+                const confirmPick = confirm(`確定要選擇 ${currentPlayer} 嗎？`);
+                if (confirmPick) {
+                    socket.send(JSON.stringify({ type: "pick", position: currentPosition, player: currentPlayer }));
                 }
             }
-
-            for (let teamKey of ["A", "B"]) {
-                const list = document.getElementById(`team_${teamKey}_list`);
-                list.innerHTML = "";
-                for (let player of state.teams?.[teamKey] || []) {
-                    const li = document.createElement("li");
-                    li.innerText = player;
-                    list.appendChild(li);
-                }
-            }
-        }
-
-        function onPositionChange() {
-            updateUI();
         }
     </script>
 </head>
 <body>
-    <h2>雙人選秀模擬器</h2>
-    <div>
-        <label>請選擇隊伍：</label>
-        <button onclick="connectWebSocket('A')">隊伍 A</button>
-        <button onclick="connectWebSocket('B')">隊伍 B</button>
-        <span id="status">尚未連線</span>
-    </div>
+    <h2>CPBL 雙人選秀模擬器</h2>
 
-    <div id="input_section">
-        <hr>
-        <h3>輸入選手名單（每個位置一行一位）</h3>
-        <textarea id="input_P" placeholder="投手 P" rows="3" cols="30"></textarea><br>
-        <textarea id="input_C" placeholder="捕手 C" rows="3" cols="30"></textarea><br>
-        <textarea id="input_IF" placeholder="內野 IF" rows="3" cols="30"></textarea><br>
-        <textarea id="input_OF" placeholder="外野 OF" rows="3" cols="30"></textarea><br>
+    <label>請選擇你的隊伍：</label>
+    <select id="team">
+        <option value="A">A</option>
+        <option value="B">B</option>
+    </select>
+    <button onclick="connect()">連線</button>
+
+    <hr>
+
+    <div id="controls_A" style="display: block;">
+        <h3>球員名單輸入（僅限 A 隊）</h3>
+        <label>P：<input id="input_P" type="text" placeholder="用逗號分隔，如 王大明,李小明"></label><br>
+        <label>C：<input id="input_C" type="text"></label><br>
+        <label>IF：<input id="input_IF" type="text"></label><br>
+        <label>OF：<input id="input_OF" type="text"></label><br>
         <button onclick="addPlayers()">送出名單</button>
         <button onclick="startDraft()">開始選秀</button>
-        <button onclick="resetDraft()">重新開始</button>
+        <button onclick="resetDraft()">重設</button>
     </div>
 
     <hr>
 
-    <h3 id="team_turn">目前輪到：</h3>
-    <div id="countdown">倒數：</div>
-
-    <label>選擇位置：</label>
-    <select id="select_position" onchange="onPositionChange()">
-        <option value="P">P</option>
-        <option value="C">C</option>
-        <option value="IF">IF</option>
-        <option value="OF">OF</option>
-    </select>
-
-    <label>選擇球員：</label>
-    <select id="select_player"></select>
-
-    <button onclick="pickPlayer()">選擇</button>
+    <div>
+        <h3>選擇球員</h3>
+        <label>P：
+            <select id="player_P"></select>
+            <button onclick="selectPlayer('P')">選擇</button>
+        </label><br>
+        <label>C：
+            <select id="player_C"></select>
+            <button onclick="selectPlayer('C')">選擇</button>
+        </label><br>
+        <label>IF：
+            <select id="player_IF"></select>
+            <button onclick="selectPlayer('IF')">選擇</button>
+        </label><br>
+        <label>OF：
+            <select id="player_OF"></select>
+            <button onclick="selectPlayer('OF')">選擇</button>
+        </label>
+    </div>
 
     <hr>
 
-    <h3>隊伍 A</h3>
-    <ul id="team_A_list"></ul>
-    <h3>隊伍 B</h3>
-    <ul id="team_B_list"></ul>
+    <div>
+        <p id="status">尚未開始</p>
+        <p id="countdown"></p>
+    </div>
+
+    <div>
+        <h4>A 隊選秀結果：</h4>
+        <p id="teamAList"></p>
+        <h4>B 隊選秀結果：</h4>
+        <p id="teamBList"></p>
+    </div>
 </body>
 </html>
