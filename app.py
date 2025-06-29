@@ -1,109 +1,91 @@
+import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.websockets import WebSocketState
-from threading import Timer
-import uvicorn
-import json
 
 app = FastAPI()
 
+# 靜態檔案提供（對應 index.html）
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+origins = ["*"]  # 為了讓不同裝置能連線
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-@app.get("/")
-async def get():
-    return HTMLResponse(open("static/index.html", encoding="utf-8").read())
-
-clients = {"A": None, "B": None}
+# 全域狀態資料
 players = {"P": [], "C": [], "IF": [], "OF": []}
-draft_started = False
-turn = "A"
-drafted = {"A": [], "B": []}
+teams = {"A": [], "B": []}
+turn_order = ["A", "B"]
+current_turn = None
 countdown = 0
-countdown_timer = None
+connected = {}
 
+# 傳送目前狀態給所有用戶
 async def broadcast_state():
-    state = {
+    global countdown
+    data = {
         "type": "state",
-        "teams": drafted,
+        "teams": teams,
         "available": players,
-        "turn": turn if draft_started else None,
-        "countdown": countdown if draft_started else None
+        "turn": current_turn,
+        "countdown": countdown
     }
-    for client in clients.values():
-        if client and client.application_state == WebSocketState.CONNECTED:
-            await client.send_text(json.dumps(state))
+    for ws in connected.values():
+        await ws.send_json(data)
 
-def start_countdown():
-    global countdown, countdown_timer
+# 倒數邏輯
+async def start_countdown():
+    global countdown
     countdown = 20
-
-    def tick():
-        global countdown, countdown_timer
+    while countdown > 0:
+        await broadcast_state()
+        await asyncio.sleep(1)
         countdown -= 1
-        if countdown <= 0:
-            countdown = 0
-            countdown_timer = None
-        else:
-            countdown_timer = Timer(1.0, tick)
-            countdown_timer.start()
-
-    countdown_timer = Timer(1.0, tick)
-    countdown_timer.start()
+    await broadcast_state()
 
 @app.websocket("/ws/{team}")
 async def websocket_endpoint(websocket: WebSocket, team: str):
-    global draft_started, turn, countdown_timer, players, drafted
-
     await websocket.accept()
-    clients[team] = websocket
+    connected[team] = websocket
     await broadcast_state()
 
     try:
         while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-
-            if message["type"] == "add_players" and team == "A":
+            data = await websocket.receive_json()
+            if data["type"] == "add_players" and team == "A":
                 for pos in ["P", "C", "IF", "OF"]:
-                    players[pos] = message["players"].get(pos, [])
+                    players[pos] = data["players"].get(pos, [])
                 await broadcast_state()
 
-            elif message["type"] == "start_draft" and team == "A":
-                draft_started = True
-                turn = "A"
-                start_countdown()
+            elif data["type"] == "start_draft" and team == "A":
+                global current_turn
+                current_turn = "A"
                 await broadcast_state()
+                asyncio.create_task(start_countdown())
 
-            elif message["type"] == "pick" and draft_started and team == turn:
-                pos = message["position"]
-                player = message["player"]
-                if player in players.get(pos, []):
-                    players[pos].remove(player)
-                    drafted[team].append(player)
-                    if countdown_timer:
-                        countdown_timer.cancel()
-                    turn = "B" if turn == "A" else "A"
-                    start_countdown()
+            elif data["type"] == "pick":
+                if team != current_turn:
+                    continue
+                pos = data["position"]
+                name = data["player"]
+                if name in players.get(pos, []):
+                    players[pos].remove(name)
+                    teams[team].append(name)
+                    current_turn = "B" if team == "A" else "A"
                     await broadcast_state()
+                    asyncio.create_task(start_countdown())
 
-            elif message["type"] == "reset":
-                players = {"P": [], "C": [], "IF": [], "OF": []}
-                drafted = {"A": [], "B": []}
-                draft_started = False
-                turn = "A"
-                if countdown_timer:
-                    countdown_timer.cancel()
+            elif data["type"] == "reset":
+                players.update({k: [] for k in players})
+                teams.update({"A": [], "B": []})
+                current_turn = None
+                countdown = 0
                 await broadcast_state()
 
     except WebSocketDisconnect:
-        clients[team] = None
+        del connected[team]
