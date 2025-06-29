@@ -1,17 +1,16 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>雙人選秀模擬器</title>
+    <title>雙人選移模擬器</title>
     <meta charset="utf-8">
     <script>
         let ws = null;
         let team = null;
         let state = {};
-        let countdownInterval = null;
 
         function connectWebSocket(selectedTeam) {
             team = selectedTeam;
-            ws = new WebSocket(`ws://${location.host}/ws/${team}`);
+            ws = new WebSocket(`wss://${location.host}/ws/${team}`);
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
@@ -19,6 +18,14 @@
                     state = data;
                     updateUI();
                 }
+            };
+
+            ws.onopen = () => {
+                console.log("WebSocket connected.");
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket error", err);
             };
         }
 
@@ -55,8 +62,8 @@
         }
 
         function updateUI() {
-            document.getElementById("team_turn").innerText = `目前輪到：${state.turn}`;
-            document.getElementById("countdown").innerText = `倒數：${state.countdown} 秒`;
+            document.getElementById("team_turn").innerText = `目前輪到：${state.turn || "-"}`;
+            document.getElementById("countdown").innerText = `倒數：${state.countdown || 0} 秒`;
 
             const select = document.getElementById("select_player");
             const pos = document.getElementById("select_position").value;
@@ -73,7 +80,7 @@
             for (let teamKey of ["A", "B"]) {
                 const list = document.getElementById(`team_${teamKey}_list`);
                 list.innerHTML = "";
-                for (let player of state.teams[teamKey] || []) {
+                for (let player of state.teams?.[teamKey] || []) {
                     const li = document.createElement("li");
                     li.innerText = player;
                     list.appendChild(li);
@@ -87,7 +94,7 @@
     </script>
 </head>
 <body>
-    <h2>雙人選秀模擬器</h2>
+    <h2>雙人選移模擬器</h2>
 
     <div>
         <label>請選擇隊伍：</label>
@@ -103,7 +110,7 @@
     <textarea id="input_IF" placeholder="內野 IF"></textarea><br>
     <textarea id="input_OF" placeholder="外野 OF"></textarea><br>
     <button onclick="addPlayers()">送出名單</button>
-    <button onclick="startDraft()">開始選秀</button>
+    <button onclick="startDraft()">開始選移</button>
     <button onclick="resetDraft()">重新開始</button>
 
     <hr>
