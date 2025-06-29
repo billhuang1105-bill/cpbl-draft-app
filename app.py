@@ -3,13 +3,12 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Dict
 from collections import defaultdict
 import json
 
 app = FastAPI()
 
-# 允許所有跨域連線
 origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -19,94 +18,68 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 管理所有 WebSocket 連線
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
+        self.active_connections: Dict[str, WebSocket] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, team: str):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections[team] = websocket
 
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+    def disconnect(self, team: str):
+        if team in self.active_connections:
+            del self.active_connections[team]
+
+    async def send_to_team(self, team: str, message: dict):
+        if team in self.active_connections:
+            await self.active_connections[team].send_json(message)
 
     async def broadcast(self, message: dict):
-        for connection in self.active_connections:
+        for connection in self.active_connections.values():
             await connection.send_json(message)
 
 manager = ConnectionManager()
 
-# 初始選秀資料
 teams = {"A": [], "B": []}
 available = {"P": [], "C": [], "IF": [], "OF": []}
 turn = "A"
 finished = False
-started = False
+started = False  # 標記是否已經開始選秀
 
 def is_all_empty():
     return all(len(players) == 0 for players in available.values())
 
-# WebSocket 路徑
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+@app.websocket("/ws/{team}")
+async def websocket_endpoint(websocket: WebSocket, team: str):
     global turn, finished, started
-    await manager.connect(websocket)
+    await manager.connect(websocket, team)
     try:
-        await manager.broadcast({
-            "type": "state",
-            "teams": teams,
-            "available": available,
-            "turn": turn,
-            "finished": finished,
-            "started": started
-        })
+        await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
         while True:
             data = await websocket.receive_json()
             if data["type"] == "add_players":
                 for pos in data["players"]:
                     for p in data["players"][pos]:
-                        if p and p not in available[pos]:
+                        if p not in available[pos]:
                             available[pos].append(p)
                 started = False
-                await manager.broadcast({
-                    "type": "state",
-                    "teams": teams,
-                    "available": available,
-                    "turn": turn,
-                    "finished": finished,
-                    "started": started
-                })
+                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
 
             elif data["type"] == "start_draft":
                 started = True
-                await manager.broadcast({
-                    "type": "state",
-                    "teams": teams,
-                    "available": available,
-                    "turn": turn,
-                    "finished": finished,
-                    "started": started
-                })
+                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
 
             elif data["type"] == "pick":
-                if not started:
+                if not started or turn != team:
                     continue
                 pos = data["position"]
                 player = data["player"]
                 if player in available[pos]:
-                    teams[data["team"]].append(player)
+                    teams[team].append(player)
                     available[pos].remove(player)
                     turn = "B" if turn == "A" else "A"
                     finished = is_all_empty()
-                await manager.broadcast({
-                    "type": "state",
-                    "teams": teams,
-                    "available": available,
-                    "turn": turn,
-                    "finished": finished,
-                    "started": started
-                })
+                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
 
             elif data["type"] == "reset":
                 teams["A"].clear()
@@ -116,33 +89,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 turn = "A"
                 finished = False
                 started = False
-                await manager.broadcast({
-                    "type": "state",
-                    "teams": teams,
-                    "available": available,
-                    "turn": turn,
-                    "finished": finished,
-                    "started": started
-                })
-
-            elif data["type"] == "noop":
-                # 用於刷新狀態（例如切換守備位置時）
-                await manager.broadcast({
-                    "type": "state",
-                    "teams": teams,
-                    "available": available,
-                    "turn": turn,
-                    "finished": finished,
-                    "started": started
-                })
+                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        manager.disconnect(team)
 
-# 回傳前端頁面
 @app.get("/")
 async def get():
     return HTMLResponse(open("static/index.html", encoding="utf-8").read())
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000)
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
