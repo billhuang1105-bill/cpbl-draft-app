@@ -1,16 +1,20 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>雙人選移模擬器</title>
+    <title>雙人選秀模擬器</title>
     <meta charset="utf-8">
     <script>
         let ws = null;
         let team = null;
         let state = {};
+        let connected = false;
 
         function connectWebSocket(selectedTeam) {
+            if (connected) return;
             team = selectedTeam;
-            ws = new WebSocket(`wss://${location.host}/ws/${team}`);
+            const protocol = location.protocol === "https:" ? "wss" : "ws";
+            ws = new WebSocket(`${protocol}://${location.host}/ws/${team}`);
+            connected = true;
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
@@ -21,7 +25,10 @@
             };
 
             ws.onopen = () => {
-                console.log("WebSocket connected.");
+                document.getElementById("status").innerText = `已連線：隊伍 ${team}`;
+                if (team !== 'A') {
+                    document.getElementById("input_section").style.display = "none";
+                }
             };
 
             ws.onerror = (err) => {
@@ -94,24 +101,25 @@
     </script>
 </head>
 <body>
-    <h2>雙人選移模擬器</h2>
-
+    <h2>雙人選秀模擬器</h2>
     <div>
         <label>請選擇隊伍：</label>
         <button onclick="connectWebSocket('A')">隊伍 A</button>
         <button onclick="connectWebSocket('B')">隊伍 B</button>
+        <span id="status">尚未連線</span>
     </div>
 
-    <hr>
-
-    <h3>輸入選手名單（每個位置一行一位）</h3>
-    <textarea id="input_P" placeholder="投手 P"></textarea><br>
-    <textarea id="input_C" placeholder="捕手 C"></textarea><br>
-    <textarea id="input_IF" placeholder="內野 IF"></textarea><br>
-    <textarea id="input_OF" placeholder="外野 OF"></textarea><br>
-    <button onclick="addPlayers()">送出名單</button>
-    <button onclick="startDraft()">開始選移</button>
-    <button onclick="resetDraft()">重新開始</button>
+    <div id="input_section">
+        <hr>
+        <h3>輸入選手名單（每個位置一行一位）</h3>
+        <textarea id="input_P" placeholder="投手 P" rows="3" cols="30"></textarea><br>
+        <textarea id="input_C" placeholder="捕手 C" rows="3" cols="30"></textarea><br>
+        <textarea id="input_IF" placeholder="內野 IF" rows="3" cols="30"></textarea><br>
+        <textarea id="input_OF" placeholder="外野 OF" rows="3" cols="30"></textarea><br>
+        <button onclick="addPlayers()">送出名單</button>
+        <button onclick="startDraft()">開始選秀</button>
+        <button onclick="resetDraft()">重新開始</button>
+    </div>
 
     <hr>
 
