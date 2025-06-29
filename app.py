@@ -1,15 +1,19 @@
-
 # app.py
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles  # ✅ 靜態檔案用
 from typing import List
 from collections import defaultdict
 import json
 
 app = FastAPI()
 
+# ✅ 靜態網頁掛載（給 Render 正常顯示 index.html）
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+# ✅ 跨來源支援
 origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -19,6 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ✅ WebSocket 管理
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -36,21 +41,30 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ✅ 初始狀態
 teams = {"A": [], "B": []}
 available = {"P": [], "C": [], "IF": [], "OF": []}
 turn = "A"
 finished = False
-started = False  # 標記是否已經開始選秀
+started = False  # 標記選秀是否已開始
 
 def is_all_empty():
     return all(len(players) == 0 for players in available.values())
 
+# ✅ WebSocket 主處理
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     global turn, finished, started
     await manager.connect(websocket)
     try:
-        await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
+        await manager.broadcast({
+            "type": "state",
+            "teams": teams,
+            "available": available,
+            "turn": turn,
+            "finished": finished,
+            "started": started
+        })
         while True:
             data = await websocket.receive_json()
             if data["type"] == "add_players":
@@ -59,11 +73,25 @@ async def websocket_endpoint(websocket: WebSocket):
                         if p not in available[pos]:
                             available[pos].append(p)
                 started = False
-                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
+                await manager.broadcast({
+                    "type": "state",
+                    "teams": teams,
+                    "available": available,
+                    "turn": turn,
+                    "finished": finished,
+                    "started": started
+                })
 
             elif data["type"] == "start_draft":
                 started = True
-                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
+                await manager.broadcast({
+                    "type": "state",
+                    "teams": teams,
+                    "available": available,
+                    "turn": turn,
+                    "finished": finished,
+                    "started": started
+                })
 
             elif data["type"] == "pick":
                 if not started:
@@ -75,7 +103,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     available[pos].remove(player)
                     turn = "B" if turn == "A" else "A"
                     finished = is_all_empty()
-                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
+                await manager.broadcast({
+                    "type": "state",
+                    "teams": teams,
+                    "available": available,
+                    "turn": turn,
+                    "finished": finished,
+                    "started": started
+                })
 
             elif data["type"] == "reset":
                 teams["A"].clear()
@@ -85,7 +120,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 turn = "A"
                 finished = False
                 started = False
-                await manager.broadcast({"type": "state", "teams": teams, "available": available, "turn": turn, "finished": finished, "started": started})
+                await manager.broadcast({
+                    "type": "state",
+                    "teams": teams,
+                    "available": available,
+                    "turn": turn,
+                    "finished": finished,
+                    "started": started
+                })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
