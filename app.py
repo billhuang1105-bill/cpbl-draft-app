@@ -1,101 +1,101 @@
-# app.py
+import asyncio
+import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-import uvicorn
-import asyncio
+from starlette.websockets import WebSocketState
 
 app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-html_path = "static/index.html"
-
-clients = {"A": None, "B": None}
-available_players = {"P": [], "C": [], "IF": [], "OF": []}
-teams = {"A": [], "B": []}
-turn = "A"
-started = False
-finished = False
-countdown_task = None
-countdown_seconds = 20
+html = """
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="refresh" content="0; url=/static/index.html" />
+    </head>
+    <body>
+        <p>Redirecting to <a href="/static/index.html">index.html</a></p>
+    </body>
+</html>
+"""
 
 @app.get("/")
 async def get():
-    with open(html_path, "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read(), status_code=200)
+    return HTMLResponse(html)
+
+clients = {"A": None, "B": None}
+
+state = {
+    "available": {},
+    "teams": {"A": [], "B": []},
+    "turn": "A",
+    "started": False,
+    "finished": False,
+    "countdown": 20
+}
+
+def broadcast_state_sync():
+    data = json.dumps({"type": "state", **state})
+    for team, client in clients.items():
+        if client and client.application_state == WebSocketState.CONNECTED:
+            asyncio.create_task(client.send_text(data))
+
+async def countdown_timer():
+    while state["started"] and not state["finished"]:
+        await asyncio.sleep(1)
+        state["countdown"] -= 1
+        if state["countdown"] <= 0:
+            state["turn"] = "B" if state["turn"] == "A" else "A"
+            state["countdown"] = 20
+        broadcast_state_sync()
 
 @app.websocket("/ws/{team}")
 async def websocket_endpoint(websocket: WebSocket, team: str):
-    global started, finished
     await websocket.accept()
     clients[team] = websocket
-    await send_state()
+    broadcast_state_sync()
 
     try:
         while True:
-            data = await websocket.receive_json()
-            if data["type"] == "add_players":
-                for pos in available_players:
-                    available_players[pos] = data["players"].get(pos, [])
-                await send_state()
-            elif data["type"] == "start_draft":
-                started = True
-                finished = False
-                await send_state()
-                asyncio.create_task(start_countdown())
-            elif data["type"] == "pick":
-                pos, player = data["position"], data["player"]
-                if player in available_players[pos]:
-                    teams[team].append(player)
-                    available_players[pos].remove(player)
-                    global turn
-                    turn = "B" if team == "A" else "A"
-                    all_empty = all(len(v) == 0 for v in available_players.values())
-                    if all_empty:
-                        finished = True
-                    await send_state()
-                    if not finished:
-                        asyncio.create_task(start_countdown())
-            elif data["type"] == "reset":
-                for pos in available_players:
-                    available_players[pos] = []
-                teams["A"] = []
-                teams["B"] = []
-                started = False
-                finished = False
-                turn = "A"
-                await send_state()
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+
+            if msg["type"] == "add_players":
+                state["available"] = msg["players"]
+                state["teams"] = {"A": [], "B": []}
+                state["turn"] = "A"
+                state["started"] = False
+                state["finished"] = False
+                state["countdown"] = 20
+
+            elif msg["type"] == "start_draft":
+                state["started"] = True
+                state["finished"] = False
+                asyncio.create_task(countdown_timer())
+
+            elif msg["type"] == "reset":
+                state["available"] = {}
+                state["teams"] = {"A": [], "B": []}
+                state["turn"] = "A"
+                state["started"] = False
+                state["finished"] = False
+                state["countdown"] = 20
+
+            elif msg["type"] == "pick":
+                pos = msg["position"]
+                player = msg["player"]
+                if player in state["available"].get(pos, []):
+                    state["teams"][team].append(player)
+                    state["available"][pos].remove(player)
+
+                    if all(len(players) == 0 for players in state["available"].values()):
+                        state["finished"] = True
+                    else:
+                        state["turn"] = "B" if team == "A" else "A"
+                        state["countdown"] = 20
+
+            broadcast_state_sync()
+
     except WebSocketDisconnect:
         clients[team] = None
-
-async def send_state(timer: int = None):
-    msg = {
-        "type": "state",
-        "available": available_players,
-        "teams": teams,
-        "turn": turn,
-        "started": started,
-        "finished": finished,
-        "countdown": timer
-    }
-    for ws in clients.values():
-        if ws:
-            await ws.send_json(msg)
-
-async def start_countdown():
-    for i in range(countdown_seconds, -1, -1):
-        await send_state(timer=i)
-        await asyncio.sleep(1)
-        if finished:
-            break
-
-if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=10000, reload=True)
