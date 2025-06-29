@@ -89,7 +89,7 @@ async def websocket_endpoint(websocket: WebSocket, team: str):
                 if player in players.get(pos, []):
                     players[pos].remove(player)
                     drafted[team].append(player)
-                    global countdown_timer
+                    global countdown_timer, countdown
                     if countdown_timer:
                         countdown_timer.cancel()
                     turn = "B" if turn == "A" else "A"
@@ -97,17 +97,18 @@ async def websocket_endpoint(websocket: WebSocket, team: str):
                     await broadcast_state()
 
             elif message["type"] == "reset":
+                global draft_started, turn, countdown_timer
                 players["P"] = []
                 players["C"] = []
                 players["IF"] = []
                 players["OF"] = []
                 drafted["A"] = []
                 drafted["B"] = []
-                global draft_started
                 draft_started = False
                 turn = "A"
                 if countdown_timer:
                     countdown_timer.cancel()
+                countdown = 0
                 await broadcast_state()
 
     except WebSocketDisconnect:
