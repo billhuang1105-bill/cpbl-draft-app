@@ -76,6 +76,7 @@
 
                     document.getElementById("add-players-section").style.display = myTeam === "A" ? "block" : "none";
                     document.getElementById("draft-section").style.display = msg.turn ? "block" : "none";
+                    updateAvailable();
                 }
             };
             ws.onerror = err => console.error("WebSocket error:", err);
@@ -121,7 +122,9 @@
         }
 
         function resetDraft() {
-            ws.send(JSON.stringify({ type: "reset" }));
+            if (confirm("確定要重置選秀嗎？")) {
+                ws.send(JSON.stringify({ type: "reset" }));
+            }
         }
     </script>
 </body>
