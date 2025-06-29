@@ -62,6 +62,8 @@ def start_countdown():
 
 @app.websocket("/ws/{team}")
 async def websocket_endpoint(websocket: WebSocket, team: str):
+    global draft_started, turn, countdown_timer, players, drafted
+
     await websocket.accept()
     clients[team] = websocket
     await broadcast_state()
@@ -77,7 +79,6 @@ async def websocket_endpoint(websocket: WebSocket, team: str):
                 await broadcast_state()
 
             elif message["type"] == "start_draft" and team == "A":
-                global draft_started, turn, countdown_timer
                 draft_started = True
                 turn = "A"
                 start_countdown()
@@ -96,13 +97,8 @@ async def websocket_endpoint(websocket: WebSocket, team: str):
                     await broadcast_state()
 
             elif message["type"] == "reset":
-                global draft_started, turn, countdown_timer
-                players["P"] = []
-                players["C"] = []
-                players["IF"] = []
-                players["OF"] = []
-                drafted["A"] = []
-                drafted["B"] = []
+                players = {"P": [], "C": [], "IF": [], "OF": []}
+                drafted = {"A": [], "B": []}
                 draft_started = False
                 turn = "A"
                 if countdown_timer:
