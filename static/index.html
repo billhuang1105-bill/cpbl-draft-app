@@ -1,57 +1,41 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>中職選秀模擬</title>
+    <title>中職選秀模擬器</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: #f3f3f3; }
+        body { font-family: sans-serif; background: #f6f6f6; margin: 20px; }
         h2 { margin-top: 30px; }
-        input, button, select {
-            margin: 5px;
-            padding: 5px;
-        }
-        .team-box {
-            border: 1px solid #ccc;
-            padding: 10px;
-            width: 45%;
-            display: inline-block;
-            vertical-align: top;
-            background: #fff;
-            min-height: 100px;
-        }
-        .player-button {
-            display: inline-block;
-            margin: 5px;
-            padding: 5px 10px;
-            background-color: #eef;
-            cursor: pointer;
-        }
+        input, button, select { margin: 5px; }
+        .team-box { width: 45%; display: inline-block; vertical-align: top; background: #fff; padding: 10px; margin: 10px; border-radius: 8px; box-shadow: 0 0 5px #ccc; }
+        .player-button { margin: 3px; padding: 4px 8px; }
+        .highlight { font-weight: bold; color: red; }
     </style>
 </head>
 <body>
-    <h1>1. 輸入球員名單（選秀前）</h1>
+    <h1>中職選秀模擬器</h1>
+
+    <h2>1. 輸入球員名單（選秀前）</h2>
     <div>
-        <label>P：</label><input type="text" id="p"><br>
-        <label>C：</label><input type="text" id="c"><br>
-        <label>IF：</label><input type="text" id="if"><br>
-        <label>OF：</label><input type="text" id="of"><br>
-        <button onclick="sendList()">送出名單</button>
+        <label>P：</label><input id="P" placeholder="以逗號分隔"><br>
+        <label>C：</label><input id="C" placeholder="以逗號分隔"><br>
+        <label>IF：</label><input id="IF" placeholder="以逗號分隔"><br>
+        <label>OF：</label><input id="OF" placeholder="以逗號分隔"><br>
+        <button onclick="submitPlayers()">送出名單</button>
         <button onclick="startDraft()">開始選秀</button>
-        <button onclick="reset()">重置</button>
+        <button onclick="resetDraft()">重置</button>
     </div>
 
     <h2>2. 開始選秀</h2>
+    <p>目前輪到：<span id="turn">-</span></p>
     <div>
-        <div>目前輪到：<span id="turn">-</span></div>
-        <div id="choosePos" style="display:none">
-            選擇守備位置：
-            <button onclick="choosePosition('P')">P</button>
-            <button onclick="choosePosition('C')">C</button>
-            <button onclick="choosePosition('IF')">IF</button>
-            <button onclick="choosePosition('OF')">OF</button>
-        </div>
-        <div id="playerList"></div>
+        選擇守備位置：
+        <button onclick="setPosition('P')">P</button>
+        <button onclick="setPosition('C')">C</button>
+        <button onclick="setPosition('IF')">IF</button>
+        <button onclick="setPosition('OF')">OF</button>
     </div>
+    <div id="player-buttons"></div>
 
     <h3>球隊 A</h3>
     <div class="team-box" id="teamA"></div>
@@ -60,102 +44,71 @@
     <div class="team-box" id="teamB"></div>
 
     <script>
-        let ws = new WebSocket("wss://" + location.host + "/ws");
-        let myTeam = null;
-        let currentTurn = null;
-        let available = {};
-        let started = false;
-        let finished = false;
-        let currentPosition = null;
+        const ws = new WebSocket(`wss://${location.host}/ws`);
+        let selectedPosition = null;
+        let currentTurn = "A";
+        let draftStarted = false;
 
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (data.type === "state") {
-                currentTurn = data.turn;
-                available = data.available;
-                started = data.started;
-                finished = data.finished;
-                document.getElementById("turn").innerText = currentTurn;
-
-                if (started && !finished) {
-                    document.getElementById("choosePos").style.display = "block";
-                } else {
-                    document.getElementById("choosePos").style.display = "none";
-                }
-
-                renderPlayers();
-                renderTeams(data.teams);
-            }
-        };
-
-        function sendList() {
-            const p = document.getElementById("p").value.split("，").join(",").split(",");
-            const c = document.getElementById("c").value.split("，").join(",").split(",");
-            const i = document.getElementById("if").value.split("，").join(",").split(",");
-            const o = document.getElementById("of").value.split("，").join(",").split(",");
-
-            ws.send(JSON.stringify({
-                type: "add_players",
-                players: {
-                    P: p.filter(x => x.trim() !== ""),
-                    C: c.filter(x => x.trim() !== ""),
-                    IF: i.filter(x => x.trim() !== ""),
-                    OF: o.filter(x => x.trim() !== "")
-                }
-            }));
+        function submitPlayers() {
+            const players = {
+                P: document.getElementById("P").value.split(",").map(s => s.trim()).filter(Boolean),
+                C: document.getElementById("C").value.split(",").map(s => s.trim()).filter(Boolean),
+                IF: document.getElementById("IF").value.split(",").map(s => s.trim()).filter(Boolean),
+                OF: document.getElementById("OF").value.split(",").map(s => s.trim()).filter(Boolean),
+            };
+            ws.send(JSON.stringify({ type: "add_players", players }));
         }
 
         function startDraft() {
             ws.send(JSON.stringify({ type: "start_draft" }));
         }
 
-        function reset() {
+        function resetDraft() {
             ws.send(JSON.stringify({ type: "reset" }));
         }
 
-        function choosePosition(pos) {
-            currentPosition = pos;
+        function setPosition(pos) {
+            selectedPosition = pos;
             renderPlayers();
         }
 
-        function renderPlayers() {
-            const container = document.getElementById("playerList");
-            container.innerHTML = "";
-
-            if (!currentPosition || !available[currentPosition]) return;
-
-            const list = available[currentPosition];
-            if (list.length === 0) {
-                container.innerHTML = `<p>${currentPosition} 已無球員可選</p>`;
-                return;
+        function pickPlayer(name) {
+            if (!draftStarted) return;
+            if (!selectedPosition) return alert("請先選擇守備位置！");
+            if (confirm(`確定選擇 ${name} 嗎？`)) {
+                ws.send(JSON.stringify({ type: "pick", team: currentTurn, position: selectedPosition, player: name }));
             }
+        }
 
-            const title = document.createElement("p");
-            title.innerText = `${currentPosition} 可選球員：`;
-            container.appendChild(title);
-
-            list.forEach(player => {
-                const btn = document.createElement("div");
+        function renderPlayers() {
+            const div = document.getElementById("player-buttons");
+            div.innerHTML = "";
+            if (!selectedPosition || !window.available) return;
+            window.available[selectedPosition].forEach(name => {
+                const btn = document.createElement("button");
                 btn.className = "player-button";
-                btn.innerText = player;
-                btn.onclick = () => {
-                    if (confirm(`你確定要選擇「${player}」嗎？`)) {
-                        ws.send(JSON.stringify({
-                            type: "pick",
-                            team: currentTurn,
-                            position: currentPosition,
-                            player: player
-                        }));
-                    }
-                };
-                container.appendChild(btn);
+                btn.innerText = name;
+                btn.onclick = () => pickPlayer(name);
+                div.appendChild(btn);
             });
         }
 
         function renderTeams(teams) {
-            document.getElementById("teamA").innerText = teams["A"].join("、");
-            document.getElementById("teamB").innerText = teams["B"].join("、");
+            document.getElementById("teamA").innerText = teams.A.join(", ");
+            document.getElementById("teamB").innerText = teams.B.join(", ");
         }
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "state") {
+                window.available = data.available;
+                draftStarted = data.started;
+                currentTurn = data.turn;
+                document.getElementById("turn").innerText = draftStarted ? currentTurn : "-";
+                renderPlayers();
+                renderTeams(data.teams);
+            }
+        };
     </script>
 </body>
 </html>
