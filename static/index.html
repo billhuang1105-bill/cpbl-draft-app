@@ -1,112 +1,121 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-    <meta charset="UTF-8">
-    <title>CPBL Draft Room</title>
-    <style>
-        body { font-family: sans-serif; margin: 20px; }
-        h2 { margin-top: 40px; }
-        .position-group { margin-bottom: 20px; }
-        button { margin: 2px; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>中職選秀模擬器</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; background: #f4f4f4; }
+    h2 { margin-top: 30px; }
+    .section { margin-bottom: 30px; }
+    .pos-block { margin-bottom: 10px; }
+    input[type="text"] { width: 60%; padding: 5px; }
+    button { margin: 5px; padding: 6px 10px; cursor: pointer; }
+    .player-list button { margin: 3px; }
+    .team { display: inline-block; width: 45%; vertical-align: top; background: #fff; padding: 10px; margin-right: 10px; border-radius: 5px; }
+    .position-group { margin: 10px 0; }
+    .highlight { font-weight: bold; color: #d43f3a; }
+  </style>
 </head>
 <body>
-    <h1>CPBL Draft Room</h1>
+  <h1>中職選秀模擬器</h1>
 
-    <div id="input-phase">
-        <h2>1. 輸入球員名單</h2>
-        <div class="position-group">
-            <strong>投手 (P):</strong><br>
-            <input id="P" placeholder="用逗號分隔，如 王小明,張大偉" size="50">
-        </div>
-        <div class="position-group">
-            <strong>捕手 (C):</strong><br>
-            <input id="C" placeholder="用逗號分隔，如 陳俊男,李國豪" size="50">
-        </div>
-        <div class="position-group">
-            <strong>內野手 (IF):</strong><br>
-            <input id="IF" placeholder="用逗號分隔，如 林志強,周思齊" size="50">
-        </div>
-        <div class="position-group">
-            <strong>外野手 (OF):</strong><br>
-            <input id="OF" placeholder="用逗號分隔，如 張志豪,詹子賢" size="50">
-        </div>
-        <button onclick="submitPlayers()">送出名單</button>
-        <button onclick="startDraft()">開始選秀</button>
+  <div class="section">
+    <h2>1. 輸入球員名單（選秀前）</h2>
+    <div class="pos-block">
+      <label>P：<input type="text" id="input-P" placeholder="用逗號分隔：小王,小李"/></label>
     </div>
-
-    <div id="draft-phase" style="display:none;">
-        <h2>2. 選秀進行中</h2>
-        <p>目前輪到隊伍：<span id="turn"></span></p>
-        <div id="positions"></div>
+    <div class="pos-block">
+      <label>C：<input type="text" id="input-C" placeholder="用逗號分隔"/></label>
     </div>
+    <div class="pos-block">
+      <label>IF：<input type="text" id="input-IF" placeholder="用逗號分隔"/></label>
+    </div>
+    <div class="pos-block">
+      <label>OF：<input type="text" id="input-OF" placeholder="用逗號分隔"/></label>
+    </div>
+    <button onclick="submitPlayers()">送出名單</button>
+    <button onclick="startDraft()">開始選秀</button>
+    <button onclick="resetDraft()">重置</button>
+  </div>
 
-    <h2>球隊名單</h2>
-    <p><strong>A 隊:</strong> <span id="teamA"></span></p>
-    <p><strong>B 隊:</strong> <span id="teamB"></span></p>
+  <div class="section">
+    <h2>2. 開始選秀</h2>
+    <p>目前輪到：<span id="turn" class="highlight">-</span></p>
+    <div id="positions"></div>
+  </div>
 
-    <button onclick="reset()">重新開始</button>
+  <div class="section">
+    <div class="team">
+      <h3>球隊 A</h3>
+      <ul id="team-A"></ul>
+    </div>
+    <div class="team">
+      <h3>球隊 B</h3>
+      <ul id="team-B"></ul>
+    </div>
+  </div>
 
-    <script>
-        let ws = new WebSocket(`wss://${location.host}/ws`);
-        let myTeam = prompt("請輸入你的隊名（A 或 B）：", "A").toUpperCase();
+  <script>
+    const ws = new WebSocket(`wss://${window.location.host}/ws`);
+    let currentTeam = null;
 
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (data.type === "state") {
-                document.getElementById("teamA").textContent = data.teams.A.join(", ");
-                document.getElementById("teamB").textContent = data.teams.B.join(", ");
-                document.getElementById("turn").textContent = data.turn;
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "state") {
+        document.getElementById("turn").textContent = data.finished
+          ? "選秀結束"
+          : `球隊 ${data.turn}`;
+        currentTeam = data.turn;
 
-                if (data.started) {
-                    document.getElementById("input-phase").style.display = "none";
-                    document.getElementById("draft-phase").style.display = "block";
-                }
+        // update teams
+        document.getElementById("team-A").innerHTML = data.teams["A"]
+          .map(p => `<li>${p}</li>`).join("");
+        document.getElementById("team-B").innerHTML = data.teams["B"]
+          .map(p => `<li>${p}</li>`).join("");
 
-                const container = document.getElementById("positions");
-                container.innerHTML = "";
-
-                for (const pos in data.available) {
-                    if (data.available[pos].length > 0) {
-                        const div = document.createElement("div");
-                        div.innerHTML = `<strong>${pos}:</strong>`;
-                        data.available[pos].forEach(player => {
-                            const btn = document.createElement("button");
-                            btn.textContent = player;
-                            btn.onclick = () => {
-                                if (data.turn === myTeam && confirm(`確定選擇 ${player} 嗎？`)) {
-                                    ws.send(JSON.stringify({ type: "pick", position: pos, player: player, team: myTeam }));
-                                }
-                            };
-                            div.appendChild(btn);
-                        });
-                        container.appendChild(div);
-                    }
-                }
-
-                if (data.finished) {
-                    container.innerHTML = "<h3>選秀結束！</h3>";
-                }
-            }
-        };
-
-        function submitPlayers() {
-            const players = {
-                P: document.getElementById("P").value.split(",").map(s => s.trim()).filter(Boolean),
-                C: document.getElementById("C").value.split(",").map(s => s.trim()).filter(Boolean),
-                IF: document.getElementById("IF").value.split(",").map(s => s.trim()).filter(Boolean),
-                OF: document.getElementById("OF").value.split(",").map(s => s.trim()).filter(Boolean),
-            };
-            ws.send(JSON.stringify({ type: "add_players", players }));
+        // update available player buttons
+        const posDiv = document.getElementById("positions");
+        posDiv.innerHTML = "";
+        for (const pos in data.available) {
+          if (data.available[pos].length > 0) {
+            const group = document.createElement("div");
+            group.className = "position-group";
+            group.innerHTML = `<strong>${pos}</strong>: ` + 
+              data.available[pos].map(name => 
+                `<button onclick="confirmPick('${pos}', '${name}')">${name}</button>`
+              ).join("");
+            posDiv.appendChild(group);
+          }
         }
+      }
+    };
 
-        function startDraft() {
-            ws.send(JSON.stringify({ type: "start_draft" }));
-        }
+    function submitPlayers() {
+      const positions = ["P", "C", "IF", "OF"];
+      const players = {};
+      positions.forEach(pos => {
+        const input = document.getElementById(`input-${pos}`).value;
+        players[pos] = input.split(",").map(p => p.trim()).filter(Boolean);
+      });
+      ws.send(JSON.stringify({ type: "add_players", players }));
+    }
 
-        function reset() {
-            ws.send(JSON.stringify({ type: "reset" }));
-        }
-    </script>
+    function startDraft() {
+      ws.send(JSON.stringify({ type: "start_draft" }));
+    }
+
+    function resetDraft() {
+      ws.send(JSON.stringify({ type: "reset" }));
+    }
+
+    function confirmPick(pos, name) {
+      if (!currentTeam) return;
+      const yes = confirm(`球隊 ${currentTeam}，是否確定選擇：${name} (${pos})？`);
+      if (yes) {
+        ws.send(JSON.stringify({ type: "pick", team: currentTeam, position: pos, player: name }));
+      }
+    }
+  </script>
 </body>
 </html>
