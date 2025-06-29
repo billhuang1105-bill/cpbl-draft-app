@@ -1,141 +1,134 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>選秀系統</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
-    textarea { width: 100%; height: 100px; }
-    .section { margin-bottom: 20px; }
-    .hidden { display: none; }
-    button { padding: 6px 12px; margin: 4px; }
-    select { padding: 4px; }
-    .player { display: inline-block; margin: 4px; padding: 4px 8px; border: 1px solid #ccc; cursor: pointer; }
-  </style>
+    <title>雙人選秀模擬器</title>
+    <meta charset="utf-8">
+    <script>
+        let ws = null;
+        let team = null;
+        let state = {};
+        let countdownInterval = null;
+
+        function connectWebSocket(selectedTeam) {
+            team = selectedTeam;
+            ws = new WebSocket(`ws://${location.host}/ws/${team}`);
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === "state") {
+                    state = data;
+                    updateUI();
+                }
+            };
+        }
+
+        function send(type, payload = {}) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type, ...payload }));
+            }
+        }
+
+        function addPlayers() {
+            const positions = ["P", "C", "IF", "OF"];
+            const players = {};
+            for (let pos of positions) {
+                const input = document.getElementById(`input_${pos}`).value.trim();
+                players[pos] = input ? input.split("\n") : [];
+            }
+            send("add_players", { players });
+        }
+
+        function startDraft() {
+            send("start_draft");
+        }
+
+        function resetDraft() {
+            send("reset");
+        }
+
+        function pickPlayer() {
+            const pos = document.getElementById("select_position").value;
+            const player = document.getElementById("select_player").value;
+            if (confirm(`確定要選擇 ${player} 嗎？`)) {
+                send("pick", { position: pos, player });
+            }
+        }
+
+        function updateUI() {
+            document.getElementById("team_turn").innerText = `目前輪到：${state.turn}`;
+            document.getElementById("countdown").innerText = `倒數：${state.countdown} 秒`;
+
+            const select = document.getElementById("select_player");
+            const pos = document.getElementById("select_position").value;
+            select.innerHTML = "";
+            if (state.available && state.available[pos]) {
+                for (let player of state.available[pos]) {
+                    const option = document.createElement("option");
+                    option.text = player;
+                    option.value = player;
+                    select.appendChild(option);
+                }
+            }
+
+            for (let teamKey of ["A", "B"]) {
+                const list = document.getElementById(`team_${teamKey}_list`);
+                list.innerHTML = "";
+                for (let player of state.teams[teamKey] || []) {
+                    const li = document.createElement("li");
+                    li.innerText = player;
+                    list.appendChild(li);
+                }
+            }
+        }
+
+        function onPositionChange() {
+            updateUI();
+        }
+    </script>
 </head>
 <body>
-  <h2>線上選秀系統</h2>
-  <div class="section" id="setup">
-    <h3>1. 請輸入選手名單（每行一個）：</h3>
-    <label>P<br><textarea id="P"></textarea></label><br>
-    <label>C<br><textarea id="C"></textarea></label><br>
-    <label>IF<br><textarea id="IF"></textarea></label><br>
-    <label>OF<br><textarea id="OF"></textarea></label><br>
-    <button onclick="submitPlayers()">提交名單</button>
-  </div>
+    <h2>雙人選秀模擬器</h2>
 
-  <div class="section hidden" id="draft">
-    <h3>2. 選秀進行中 - 您是隊伍 <span id="teamLabel"></span></h3>
-    <div id="turnStatus"></div>
     <div>
-      <label>請選擇守備位置：
-        <select id="positionSelect" onchange="renderPositionList()">
-          <option value="">--選擇位置--</option>
-          <option value="P">P</option>
-          <option value="C">C</option>
-          <option value="IF">IF</option>
-          <option value="OF">OF</option>
-        </select>
-      </label>
+        <label>請選擇隊伍：</label>
+        <button onclick="connectWebSocket('A')">隊伍 A</button>
+        <button onclick="connectWebSocket('B')">隊伍 B</button>
     </div>
-    <div id="playersList"></div>
-    <div id="countdown"></div>
+
+    <hr>
+
+    <h3>輸入選手名單（每個位置一行一位）</h3>
+    <textarea id="input_P" placeholder="投手 P"></textarea><br>
+    <textarea id="input_C" placeholder="捕手 C"></textarea><br>
+    <textarea id="input_IF" placeholder="內野 IF"></textarea><br>
+    <textarea id="input_OF" placeholder="外野 OF"></textarea><br>
+    <button onclick="addPlayers()">送出名單</button>
     <button onclick="startDraft()">開始選秀</button>
-    <button onclick="resetDraft()">重置選秀</button>
-    <div id="teamsDisplay"></div>
-  </div>
+    <button onclick="resetDraft()">重新開始</button>
 
-  <script>
-    const team = prompt("請輸入您的隊伍（A 或 B）")?.toUpperCase();
-    const ws = new WebSocket(`wss://${location.host}/ws/${team}`);
-    let available = {};
-    let turn = "A";
-    let finished = false;
-    let started = false;
-    let timer;
-    document.getElementById("teamLabel").textContent = team;
+    <hr>
 
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === "state") {
-        available = msg.available;
-        turn = msg.turn;
-        finished = msg.finished;
-        started = msg.started;
-        updateUI(msg);
-      }
-    };
+    <h3 id="team_turn">目前輪到：</h3>
+    <div id="countdown">倒數：</div>
 
-    function submitPlayers() {
-      const players = {
-        P: document.getElementById("P").value.trim().split("\n").filter(x => x),
-        C: document.getElementById("C").value.trim().split("\n").filter(x => x),
-        IF: document.getElementById("IF").value.trim().split("\n").filter(x => x),
-        OF: document.getElementById("OF").value.trim().split("\n").filter(x => x)
-      };
-      ws.send(JSON.stringify({ type: "add_players", players }));
-      document.getElementById("setup").classList.add("hidden");
-      document.getElementById("draft").classList.remove("hidden");
-    }
+    <label>選擇位置：</label>
+    <select id="select_position" onchange="onPositionChange()">
+        <option value="P">P</option>
+        <option value="C">C</option>
+        <option value="IF">IF</option>
+        <option value="OF">OF</option>
+    </select>
 
-    function startDraft() {
-      ws.send(JSON.stringify({ type: "start_draft" }));
-    }
+    <label>選擇球員：</label>
+    <select id="select_player"></select>
 
-    function pickPlayer(position, player) {
-      if (confirm(`是否確定選擇 ${player}？`)) {
-        ws.send(JSON.stringify({ type: "pick", position, player }));
-      }
-    }
+    <button onclick="pickPlayer()">選擇</button>
 
-    function resetDraft() {
-      ws.send(JSON.stringify({ type: "reset" }));
-    }
+    <hr>
 
-    function renderPositionList() {
-      const pos = document.getElementById("positionSelect").value;
-      const listDiv = document.getElementById("playersList");
-      listDiv.innerHTML = "";
-      if (pos && available[pos]) {
-        available[pos].forEach(p => {
-          const btn = document.createElement("div");
-          btn.className = "player";
-          btn.textContent = p;
-          btn.onclick = () => pickPlayer(pos, p);
-          listDiv.appendChild(btn);
-        });
-      }
-    }
-
-    function updateUI(msg) {
-      document.getElementById("turnStatus").textContent = finished ?
-        "選秀結束" : `目前輪到隊伍 ${msg.turn}`;
-      document.getElementById("teamsDisplay").innerHTML =
-        `<h4>隊伍 A: ${msg.teams.A.join(", ")}</h4><h4>隊伍 B: ${msg.teams.B.join(", ")}</h4>`;
-      if (msg.turn === team && msg.started && !msg.finished) {
-        startTimer();
-      } else {
-        stopTimer();
-      }
-    }
-
-    function startTimer() {
-      let countdown = 20;
-      document.getElementById("countdown").textContent = `倒數 ${countdown} 秒`;
-      timer = setInterval(() => {
-        countdown--;
-        document.getElementById("countdown").textContent = `倒數 ${countdown} 秒`;
-        if (countdown <= 0) {
-          clearInterval(timer);
-        }
-      }, 1000);
-    }
-
-    function stopTimer() {
-      clearInterval(timer);
-      document.getElementById("countdown").textContent = "";
-    }
-  </script>
+    <h3>隊伍 A</h3>
+    <ul id="team_A_list"></ul>
+    <h3>隊伍 B</h3>
+    <ul id="team_B_list"></ul>
 </body>
 </html>
